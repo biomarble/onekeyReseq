@@ -1,0 +1,198 @@
+#!/usr/bin/env bash
+CPU=`getconf _NPROCESSORS_ONLN|xargs -I% echo "% - 1"|bc`
+MEM=`cat /proc/meminfo|grep MemFree |awk '{print int($2/1024)}'`"M"
+export _JAVA_OPTIONS="-Xmx$MEM -Djava.io.tmpdir=$PWD/tmp"
+GATKCOMMAND="gatk --java-options \"$_JAVA_OPTIONS\" "
+flag=0
+if [ ! -d log ];then
+mkdir log
+fi
+if [ -f log/stderr.log ];then
+rm log/stderr.log
+fi
+if [ -f log/stdout.log ];then
+rm log/stdout.log
+fi
+function checkfile()
+{
+if [ ! -f $1 ];then
+printf "未发现文件:\t$1\n"
+flag=1
+fi
+}
+function runordie()
+{
+local CMD="$*"
+echo ""
+echo "开始运行：$CMD"
+printf "\n[COMMAND] $CMD\n" >>log/stderr.log
+printf "\n[COMMAND] $CMD:\n" >>log/stdout.log
+echo "$CMD 2>>log/stderr.log >>log/stdout.log"|bash
+if [ $? != 0 ];then
+printf "\n\n下列命令运行错误，详情见日志(log)文件夹：\n"
+echo "$CMD"
+echo ""
+exit 1
+fi
+echo "运行结束：$CMD"
+echo ""
+}
+function seqrun()
+{
+local CMD="bash $1"
+if [ ! -e "$1.ok" ];then
+runordie $CMD
+touch $1.ok
+else
+echo "跳过已完成步骤: $1 "
+fi
+}
+function parallelrun()
+{
+local CMD="parallel -j $CPU <$1"
+if [ ! -e "$1.ok" ];then
+runordie $CMD
+touch $1.ok
+else
+echo "跳过已完成步骤: $1 "
+fi
+}
+if [ ! -e ~/.parallel ];then
+mkdir ~/.parallel
+if [ ! -e ~/.parallel/will-cite ];then
+touch ~/.parallel/will-cite
+fi
+fi
+checkfile "genome/sequences.fa"
+checkfile "genome/genes.gtf"
+checkfile "sample.list.txt"
+for i in `cat sample.list.txt|grep -v "#"`
+do
+checkfile "fq/$i.R1.fq.gz"
+checkfile "fq/$i.R2.fq.gz"
+done
+if [ $flag == 1 ];then
+echo ""
+echo "分析无法继续，请修复上述错误后重试！"
+exit 0
+fi
+if [ ! -e commands ];then
+mkdir commands
+mkdir commands/1.mapping
+mkdir commands/2.SNP
+fi
+if [ ! -e genome/snpEffectPredictor.bin ];then
+cmd="snpEff build -Xmx$MEM -configOption genome.genome=genome -dataDir $PWD genome -v -noCheckProtein -noCheckCds -noLog -nodownload"
+runordie $cmd
+fi
+if [ ! -e genome/sequences.fa.bwt ];then
+cmd="bwa index $PWD/genome/sequences.fa"
+runordie $cmd
+fi
+ if [ ! -e genome/sequences.fa.fai ];then
+cmd="samtools faidx $PWD/genome/sequences.fa"
+runordie $cmd
+fi
+if [ ! -e genome/sequences.dict ];then
+cmd="gatk CreateSequenceDictionary -R $PWD/genome/sequences.fa "
+runordie $cmd
+fi
+if [ ! -e 1.mapping ];then
+mkdir 1.mapping
+fi
+if [ ! -e 1.mapping/MarkDup ];then
+mkdir 1.mapping/MarkDup
+fi
+if [ -e commands/1.mapping/s1.map.sh ];then
+rm commands/1.mapping/s1.map.sh
+fi
+if [ -e commands/1.mapping/s2.MarkDup.sh ];then
+rm commands/1.mapping/s2.MarkDup.sh
+fi
+for i in `cat sample.list.txt|grep -v "#" `
+do
+echo "bwa mem $PWD/genome/sequences.fa $PWD/fq/$i.R1.fq.gz $PWD/fq/$i.R2.fq.gz -M -t $CPU -R \"@RG\tID:$i\tLB:$i\tPL:ILLUMINA\tSM:$i\" | samtools sort -@ $CPU >$PWD/1.mapping/$i.bam && samtools stats $PWD/1.mapping/$i.bam >$PWD/1.mapping/$i.stat.txt" >>commands/1.mapping/s1.map.sh
+echo "$GATKCOMMAND MarkDuplicates -I $PWD/1.mapping/$i.bam -O $PWD/1.mapping/MarkDup/$i.MarkDup.bam -M $PWD/1.mapping/MarkDup/$i.markdup_metrics.txt && samtools index $PWD/1.mapping/MarkDup/$i.MarkDup.bam " >>commands/1.mapping/s3.MarkDup.sh;
+done
+echo "multiqc -n $PWD/1.mapping/mapStat  --no-data-dir $PWD/1.mapping" >commands/1.mapping/s2.mapstat.sh;
+if [ ! -e 2.SNP ];then
+mkdir 2.SNP
+fi
+if [ ! -e 2.SNP/1.GVCF ];then
+mkdir 2.SNP/1.GVCF
+fi
+if [ ! -e 2.SNP/2.cohort ];then
+mkdir 2.SNP/2.cohort
+fi
+if [ ! -e 2.SNP/3.filt ];then
+mkdir 2.SNP/3.filt
+fi
+if [ -e commands/2.SNP/s1.HC.sh ];then
+rm commands/2.SNP/s1.HC.sh
+fi
+if [ -e commands/2.SNP/s2.CombineGVCFs.sh ];then
+rm commands/2.SNP/s2.CombineGVCFs.sh
+fi
+if [ -e commands/2.SNP/s3.GenotypeGVCF.sh ];then
+rm commands/2.SNP/s3.GenotypeGVCF.sh
+fi
+if [ -e commands/2.SNP/s4.CombineVCFs.sh ];then
+rm commands/2.SNP/s4.CombineVCFs.sh
+fi
+if [ -e commands/2.SNP/s5.Select.sh ];then
+rm 2.SNP/s5.Select.sh
+fi
+if [ -e commands/2.SNP/s3.GenotypeGVCF.sh ];then
+rm commands/2.SNP/s3.GenotypeGVCF.sh
+fi
+for i in `cat sample.list.txt|grep -v "#"`
+do
+for j in `cut -f1 genome/sequences.fa.fai`
+do
+echo "$GATKCOMMAND HaplotypeCaller -R $PWD/genome/sequences.fa -I $PWD/1.mapping/MarkDup/$i.MarkDup.bam -O $PWD/2.SNP/1.GVCF/$i.$j.gvcf.gz --emit-ref-confidence GVCF --do-not-run-physical-phasing -L $j -stand-call-conf 30 " >>commands/2.SNP/s1.HC.sh
+done
+done
+for j in `cut -f1 genome/sequences.fa.fai`
+do
+printf "$GATKCOMMAND CombineGVCFs -R $PWD/genome/sequences.fa -O $PWD/2.SNP/2.cohort/$j.g.vcf.gz " >>commands/2.SNP/s2.CombineGVCFs.sh
+for i in `cat sample.list.txt|grep -v "#"`
+do
+printf " -V $PWD/2.SNP/1.GVCF/$i.$j.gvcf.gz " >>commands/2.SNP/s2.CombineGVCFs.sh
+done
+printf "\n" >>commands/2.SNP/s2.CombineGVCFs.sh
+done
+for j in `cut -f1 genome/sequences.fa.fai`
+do
+echo "$GATKCOMMAND GenotypeGVCFs -R $PWD/genome/sequences.fa -V $PWD/2.SNP/2.cohort/$j.g.vcf.gz -O $PWD/2.SNP/2.cohort/$j.vcf.gz " >>commands/2.SNP/s3.GenotypeGVCF.sh
+done
+printf "$GATKCOMMAND GatherVcfs -O $PWD/2.SNP/2.cohort/cohort.vcf" >commands/2.SNP/s4.CombineVCFs.sh
+for j in `cut -f1 genome/sequences.fa.fai`
+do
+printf " -I $PWD/2.SNP/2.cohort/$j.vcf.gz " >>commands/2.SNP/s4.CombineVCFs.sh
+done
+printf "\n" >>commands/2.SNP/s4.CombineVCFs.sh
+echo "$GATKCOMMAND SelectVariants -V $PWD/2.SNP/2.cohort/cohort.vcf -select-type SNP -O $PWD/2.SNP/3.filt/raw.snps.vcf.gz" >commands/2.SNP/s5.Select.sh
+echo "$GATKCOMMAND SelectVariants -V $PWD/2.SNP/2.cohort/cohort.vcf -select-type INDEL -O $PWD/2.SNP/3.filt/raw.indel.vcf.gz " >>commands/2.SNP/s5.Select.sh
+echo "$GATKCOMMAND VariantFiltration -V $PWD/2.SNP/3.filt/raw.snps.vcf.gz -O $PWD/2.SNP/3.filt/snps.vcf.gz -filter \"QD < 2.0\" --filter-name \"QD2\" -filter \"QUAL < 30.0\" --filter-name \"QUAL30\" -filter \"SOR > 3.0\" --filter-name \"SOR3\" -filter \"FS > 60.0\" --filter-name \"FS60\" -filter \"MQ < 40.0\" --filter-name \"MQ40\" -filter \"MQRankSum < -12.5\" --filter-name \"MQRankSum-12.5\" -filter \"ReadPosRankSum < -8.0\" --filter-name \"ReadPosRankSum-8\" " >commands/2.SNP/s6.Filter.sh
+echo "$GATKCOMMAND VariantFiltration -V $PWD/2.SNP/3.filt/raw.indel.vcf.gz -O $PWD/2.SNP/3.filt/indel.vcf.gz -filter \"QD < 2.0\" --filter-name \"QD2\" -filter \"QUAL < 30.0\" --filter-name \"QUAL30\" -filter \"FS > 200.0\" --filter-name \"FS200\" -filter \"ReadPosRankSum < -20.0\" --filter-name \"ReadPosRankSum-20\" " >>commands/2.SNP/s6.Filter.sh
+echo "vcftools --gzvcf $PWD/2.SNP/3.filt/snps.vcf.gz --out $PWD/2.SNP/3.filt/final.snp --recode --remove-filtered-all " >commands/2.SNP/s7.extract.sh
+echo "vcftools --gzvcf $PWD/2.SNP/3.filt/indel.vcf.gz --out $PWD/2.SNP/3.filt/final.indel --recode --remove-filtered-all " >>commands/2.SNP/s7.extract.sh
+echo "snpEff eff -dataDir $PWD -configOption genome.genome=\"genome\" genome $PWD/2.SNP/3.filt/final.snp.recode.vcf -ud 0 -noLog -noStats -geneId -o gatk >$PWD/2.SNP/snp.anno.vcf ">commands/2.SNP/s8.anno.sh
+echo "snpEff eff -dataDir $PWD -configOption genome.genome=\"genome\" genome $PWD/2.SNP/3.filt/final.indel.recode.vcf -ud 0 -noLog -noStats -geneId -o gatk >$PWD/2.SNP/indel.anno.vcf" >>commands/2.SNP/s8.anno.sh
+echo "$GATKCOMMAND MergeVcfs -I $PWD/2.SNP/indel.anno.vcf -I $PWD/2.SNP/snp.anno.vcf -O $PWD/2.SNP/snp.indel.anno.vcf && bcftools annotate --set-id +'%CHROM\_%POS' $PWD/2.SNP/snp.indel.anno.vcf >$PWD/2.SNP/snp.indel.anno.addid.vcf " >commands/2.SNP/s9.merge.sh
+seqrun "commands/1.mapping/s1.map.sh"
+seqrun "commands/1.mapping/s2.mapstat.sh"
+parallelrun "commands/1.mapping/s3.MarkDup.sh"
+parallelrun "commands/2.SNP/s1.HC.sh"
+parallelrun "commands/2.SNP/s2.CombineGVCFs.sh"
+parallelrun "commands/2.SNP/s3.GenotypeGVCF.sh"
+parallelrun "commands/2.SNP/s4.CombineVCFs.sh"
+parallelrun "commands/2.SNP/s5.Select.sh"
+parallelrun "commands/2.SNP/s6.Filter.sh"
+parallelrun "commands/2.SNP/s7.extract.sh"
+parallelrun "commands/2.SNP/s8.anno.sh"
+seqrun "commands/2.SNP/s9.merge.sh"
+
+echo "所有分析已完成!"
+
+rm -rf $PWD/tmp
