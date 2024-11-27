@@ -29,7 +29,7 @@ genome-->genes.gtf
 install dependencies using conda:
 
 ```bash
-mamba create -n WGS perl=5.26.2 gatk4=4.2.5  bwa=0.7.17  samtools=1.15  vcftools=0.1.16 snpeff=5.1 python=3.7 parallel=20211222 bcftools=1.15 multiqc=1.12
+mamba create -n WGS perl=5.26.2 gatk4=4.2.5  bwa=0.7.17  samtools=1.15  vcftools=0.1.16 snpeff=5.1 python=3.8 parallel=20211222 bcftools=1.15 multiqc=1.12
 ```
 ### Usage
 
