@@ -183,8 +183,8 @@ fi
 if [ -e commands/1.mapping/s1.map.sh ];then
 rm commands/1.mapping/s1.map.sh
 fi
-if [ -e commands/1.mapping/s2.MarkDup.sh ];then
-rm commands/1.mapping/s2.MarkDup.sh
+if [ -e commands/1.mapping/s3.MarkDup.sh ];then
+rm commands/1.mapping/s3.MarkDup.sh
 fi
 for i in `cat sample.list.txt|grep -v "#" `
 do
