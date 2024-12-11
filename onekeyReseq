@@ -257,8 +257,8 @@ done >>commands/2.SNP/s4.CombineVCFs.sh
 echo ""  >>commands/2.SNP/s4.CombineVCFs.sh
 
 cat >commands/2.SNP/s5.Filter.sh  <<EOF
-bcftools view --no-version -V indels $PWD/2.SNP/3.filt/raw.vcf.gz |bcftools filter --no-version -s 'PASS' -i 'QD>=2 && QUAL>=30 && SOR<=3 && FS<=60 && MQ>=40 && MQRankSum>=-12.5 && ReadPosRankSum>=-8' |bcftools annotate --no-version --set-id '%CHROM\__%POS'  -W  -Oz -o $PWD/2.SNP/3.filt/filtered.snp.vcf.gz 
-bcftools view --no-version -V snps   $PWD/2.SNP/3.filt/raw.vcf.gz |bcftools filter --no-version -s 'PASS' -i 'QD>=2 && QUAL>=30 && FS<=200 && ReadPosRankSum>=-20' |bcftools annotate --no-version --set-id '%CHROM\__%POS' -W  -Oz -o $PWD/2.SNP/3.filt/filtered.indel.vcf.gz
+bcftools view --no-version -V indels $PWD/2.SNP/3.filt/raw.vcf.gz |bcftools filter --no-version -s 'PASS' -i 'QD>=2 && QUAL>=30 && SOR<=3 && FS<=60 && MQ>=40 && MQRankSum>=-12.5 && ReadPosRankSum>=-8' |bcftools annotate --no-version --set-id '%CHROM\__%POS' -Oz -o $PWD/2.SNP/3.filt/filtered.snp.vcf.gz  && tabix -C  $PWD/2.SNP/3.filt/filtered.snp.vcf.gz
+bcftools view --no-version -V snps   $PWD/2.SNP/3.filt/raw.vcf.gz |bcftools filter --no-version -s 'PASS' -i 'QD>=2 && QUAL>=30 && FS<=200 && ReadPosRankSum>=-20' |bcftools annotate --no-version --set-id '%CHROM\__%POS' -Oz -o $PWD/2.SNP/3.filt/filtered.indel.vcf.gz  && tabix  -C  $PWD/2.SNP/3.filt/filtered.indel.vcf.gz
 EOF
 echo "bcftools concat -a -d all --no-version $PWD/2.SNP/3.filt/filtered.snp.vcf.gz $PWD/2.SNP/3.filt/filtered.indel.vcf.gz -Oz  -o  $PWD/2.SNP/3.filt/filtered.all.vcf.gz " >commands/2.SNP/s6.merge.sh
 echo "snpEff -Xmx${MEM}M eff -dataDir $PWD -configOption genome.genome=\"genome\" genome $PWD/2.SNP/3.filt/filtered.all.vcf.gz -ud 3000 -noLog -noStats -geneId -o gatk |bcftools view --no-version -Oz -o $PWD/2.SNP/4.anno/all.Variants.anno.vcf.gz ">commands/2.SNP/s7.anno.sh
