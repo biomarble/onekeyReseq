@@ -1,5 +1,54 @@
 #!/usr/bin/env bash
 
+curTime(){
+	echo $(date +"%Y-%m-%d %H:%M:%S")
+}
+
+function checkfile()
+{
+ctime=$(curTime)
+if [ ! -f $1 ];then
+printf "[ERROR] $ctime: 未发现文件:\t$1\n"
+flag=1
+fi
+}
+
+if [ $# -eq 0 ]; then
+	work_dir="."
+	work_dir=$(realpath $work_dir)
+	echo -e "使用当前文件夹作为工作目录\n$work_dir\n"
+else
+	work_dir="$1"
+	if [ ! -d "$work_dir" ]; then
+		echo "错误：指定的工作目录 $work_dir 不存在，请检查输入的目录路径是否正确。"
+		exit 1
+	fi
+	work_dir=$(realpath $work_dir)
+	echo -e "工作目录:\n$work_dir\n"
+fi
+
+cd $work_dir 
+
+flag=0
+checkfile "genome/sequences.fa"
+checkfile "genome/genes.gtf"
+checkfile "sample.list.txt"
+if [ -e "sample.list.txt" ];then
+for i in `cat sample.list.txt|tr -d '\r'|grep -v "#"|grep -vP '^$'`
+do
+checkfile "fq/$i.R1.fq.gz"
+checkfile "fq/$i.R2.fq.gz"
+done
+fi
+if [ $flag == 1 ];then
+ctime=$(curTime)
+echo ""
+echo "[ERROR] $ctime 分析无法继续，请修复上述错误后重试！"
+exit 1
+else
+echo -e  "输入文件检查正常\n"
+fi
+
 CPU=`getconf _NPROCESSORS_ONLN|xargs -I% echo "% - 1"|bc`
 echo "默认CPU核心数目: $CPU"
 read -p "回车确认，或直接输入数字修改: " input
@@ -44,8 +93,6 @@ GATKCOMMAND="gatk --java-options \"$_JAVA_OPTIONS\" "
 _JAVA_OPTIONS2="-Xmx${MEM}G -Djava.io.tmpdir=$PWD/tmp"
 GATKCOMMAND2="gatk --java-options \"$_JAVA_OPTIONS2\" "
 
-flag=0
-
 if [ ! -d log ];then
 mkdir log
 fi
@@ -55,18 +102,7 @@ fi
 if [ -f log/stdout.log ];then
 rm log/stdout.log
 fi
-curTime(){
-	echo $(date +"%Y-%m-%d %H:%M:%S")
-}
 
-function checkfile()
-{
-ctime=$(curTime)
-if [ ! -f $1 ];then
-printf "[ERROR] $ctime: 未发现文件:\t$1\n"
-flag=1
-fi
-}
 function runordie()
 {
 local CMD="$*"
@@ -116,22 +152,6 @@ mkdir ~/.parallel
 if [ ! -e ~/.parallel/will-cite ];then
 touch ~/.parallel/will-cite
 fi
-fi
-checkfile "genome/sequences.fa"
-checkfile "genome/genes.gtf"
-checkfile "sample.list.txt"
-if [ -e "sample.list.txt" ];then
-for i in `cat sample.list.txt|grep -v "#"`
-do
-checkfile "fq/$i.R1.fq.gz"
-checkfile "fq/$i.R2.fq.gz"
-done
-fi
-if [ $flag == 1 ];then
-ctime=$(curTime)
-echo ""
-echo "[ERROR] $ctime 分析无法继续，请修复上述错误后重试！"
-exit 0
 fi
 if [ ! -e commands ];then
 mkdir commands
@@ -247,8 +267,8 @@ echo "bcftools view -V indels $PWD/2.SNP/4.anno/all.Variants.anno.vcf.gz --no-ve
 echo "bcftools view -V snps $PWD/2.SNP/4.anno/all.Variants.anno.vcf.gz --no-version  -Oz -o $PWD/2.SNP/4.anno/indel.anno.vcf.gz " >>commands/2.SNP/s8.select.sh
 
 
-echo "bcftools query -f \"%CHROM\\t%POS\\t%REF\\t%ALT\\t%EFF[\\t%TGT]\\n\"   $PWD/2.SNP/4.anno/indel.anno.vcf.gz  |sed '1s/\[[0-9]\+\]//g' >$PWD/2.SNP/5.varTable/indels.table.tsv " >commands/2.SNP/s9.makeTable.sh
-echo "bcftools query -f \"%CHROM\\t%POS\\t%REF\\t%ALT\\t%EFF[\\t%TGT]\\n\"   $PWD/2.SNP/4.anno/snp.anno.vcf.gz    |sed '1s/\[[0-9]\+\]//g' >$PWD/2.SNP/5.varTable/snps.table.tsv "   >>commands/2.SNP/s9.makeTable.sh
+echo "bcftools query -f \"%CHROM\\t%POS\\t%REF\\t%ALT\\t%EFF[\\t%TGT]\\n\"   $PWD/2.SNP/4.anno/indel.anno.vcf.gz  -H |sed '1s/\[[0-9]\+\]//g' >$PWD/2.SNP/5.varTable/indels.table.tsv " >commands/2.SNP/s9.makeTable.sh
+echo "bcftools query -f \"%CHROM\\t%POS\\t%REF\\t%ALT\\t%EFF[\\t%TGT]\\n\"   $PWD/2.SNP/4.anno/snp.anno.vcf.gz    -H |sed '1s/\[[0-9]\+\]//g' >$PWD/2.SNP/5.varTable/snps.table.tsv "   >>commands/2.SNP/s9.makeTable.sh
 
 
 
@@ -263,6 +283,7 @@ parallelrun "commands/2.SNP/s5.Filter.sh"
 parallelrun "commands/2.SNP/s6.merge.sh"
 seqrun      "commands/2.SNP/s7.anno.sh"
 parallelrun "commands/2.SNP/s8.select.sh"
+parallelrun "commands/2.SNP/s9.makeTable.sh"
 
 echo "所有分析已完成!"
 
