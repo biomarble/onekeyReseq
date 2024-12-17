@@ -59,8 +59,13 @@ if [ -z "$input" ]; then
 	echo -ne "确认 $CPU \n\n"
 else
 	if [[ "$input" =~ ^[0-9]+$ ]]; then
-		CPU=$input
-	        echo -en "确认 $CPU \n \n"
+		if [ $input -gt $CPU ];then
+			echo "输入数值大于实际数目，请修改!"
+			exit 1
+	        else
+		   CPU=$input
+	           echo -en "确认 $CPU \n \n"
+		fi
 	else
 		echo "输入不合法，请输入回车或者合法的数字进行相应操作"
 		exit 1
@@ -82,8 +87,8 @@ else
                 echo -e "确认 $MEM Gb\n\n"
             fi
        else
-            echo "输入不合法，请输入回车或者合法的数字进行相应操作"
-            exit 1
+	   echo "输入不合法，请输入回车或者合法的数字(整数)进行相应操作"
+           exit 1
         fi
 fi
 
