@@ -33,13 +33,15 @@ flag=0
 checkfile "genome/sequences.fa"
 checkfile "genome/genes.gtf"
 checkfile "sample.list.txt"
-if [ -e "sample.list.txt" ];then
-for i in `cat sample.list.txt|tr -d '\r'|grep -v "#"|grep -vP '^$'`
+
+samples=$(cat sample.list.txt|tr -d '\r'|grep -vP "^#"|grep -vP '^\s*$')
+
+for i in $samples
 do
 checkfile "fq/$i.R1.fq.gz"
 checkfile "fq/$i.R2.fq.gz"
 done
-fi
+
 if [ $flag == 1 ];then
 ctime=$(curTime)
 echo ""
@@ -87,12 +89,15 @@ fi
 
 MEM_PARALLEL=$(echo "$MEM / $CPU" | bc)
 
-export _JAVA_OPTIONS="-Xmx${MEM_PARALLEL}G -Djava.io.tmpdir=$PWD/tmp"
+export _JAVA_OPTIONS="-Xmx${MEM_PARALLEL}G -XX:ParallelGCThreads=5 -Djava.io.tmpdir=$PWD/tmp"
 GATKCOMMAND="gatk --java-options \"$_JAVA_OPTIONS\" "
 
-_JAVA_OPTIONS2="-Xmx${MEM}G -Djava.io.tmpdir=$PWD/tmp"
+_JAVA_OPTIONS2="-Xmx${MEM}G -XX:ParallelGCThreads=5 -Djava.io.tmpdir=$PWD/tmp"
 GATKCOMMAND2="gatk --java-options \"$_JAVA_OPTIONS2\" "
 
+if [ ! -d tmp ];then
+mkdir tmp
+fi
 if [ ! -d log ];then
 mkdir log
 fi
@@ -102,6 +107,11 @@ fi
 if [ -f log/stdout.log ];then
 rm log/stdout.log
 fi
+
+echo "Sample names:"  >log/stdout.log
+echo "Sample names:"  >log/stderr.log
+echo "$samples" | xargs -n1 | paste -d' ' -s  >>log/stdout.log
+echo "$samples" | xargs -n1 | paste -d' ' -s  >>log/stderr.log
 
 function runordie()
 {
@@ -186,7 +196,7 @@ fi
 if [ -e commands/1.mapping/s3.MarkDup.sh ];then
 rm commands/1.mapping/s3.MarkDup.sh
 fi
-for i in `cat sample.list.txt|grep -v "#" `
+for i in $samples
 do
 echo "bwa mem $PWD/genome/sequences.fa $PWD/fq/$i.R1.fq.gz $PWD/fq/$i.R2.fq.gz -M -t $CPU -R \"@RG\tID:$i\tLB:$i\tPL:ILLUMINA\tSM:$i\" | samtools sort -@ $CPU >$PWD/1.mapping/$i.bam && samtools stats $PWD/1.mapping/$i.bam >$PWD/1.mapping/$i.stat.txt" >>commands/1.mapping/s1.map.sh
 echo "$GATKCOMMAND MarkDuplicates -I $PWD/1.mapping/$i.bam -O $PWD/1.mapping/MarkDup/$i.MarkDup.bam -M $PWD/1.mapping/MarkDup/$i.markdup_metrics.txt && samtools index $PWD/1.mapping/MarkDup/$i.MarkDup.bam " >>commands/1.mapping/s3.MarkDup.sh;
@@ -228,17 +238,23 @@ fi
 if [ -e commands/2.SNP/s3.GenotypeGVCF.sh ];then
 rm commands/2.SNP/s3.GenotypeGVCF.sh
 fi
-for i in `cat sample.list.txt|grep -v "#"`
+for i in $samples
 do
 for j in `cut -f1 genome/sequences.fa.fai`
 do
+if [ -e $PWD/2.SNP/1.GVCF/$i.$j.gvcf.gz.tbi ];then
+echo -n "#" >>commands/2.SNP/s1.HC.sh
+fi
 echo "$GATKCOMMAND HaplotypeCaller -R $PWD/genome/sequences.fa -I $PWD/1.mapping/MarkDup/$i.MarkDup.bam -O $PWD/2.SNP/1.GVCF/$i.$j.gvcf.gz --emit-ref-confidence GVCF --do-not-run-physical-phasing -L $j -stand-call-conf 30 " >>commands/2.SNP/s1.HC.sh
 done
 done
 for j in `cut -f1 genome/sequences.fa.fai`
 do
+if [ -e $PWD/2.SNP/2.cohort/$j.g.vcf.gz.tbi ];then
+echo -n "#" >>commands/2.SNP/s2.CombineGVCFs.sh
+fi
 printf "$GATKCOMMAND CombineGVCFs -R $PWD/genome/sequences.fa -O $PWD/2.SNP/2.cohort/$j.g.vcf.gz " >>commands/2.SNP/s2.CombineGVCFs.sh
-for i in `cat sample.list.txt|grep -v "#"`
+for i in $samples
 do
 printf " -V $PWD/2.SNP/1.GVCF/$i.$j.gvcf.gz " >>commands/2.SNP/s2.CombineGVCFs.sh
 done
@@ -246,6 +262,9 @@ printf "\n" >>commands/2.SNP/s2.CombineGVCFs.sh
 done
 for j in `cut -f1 genome/sequences.fa.fai`
 do
+if [ -e $PWD/2.SNP/2.cohort/$j.vcf.gz.tbi ];then
+echo -n "#" >>commands/2.SNP/s3.GenotypeGVCF.sh
+fi
 echo "$GATKCOMMAND GenotypeGVCFs -R $PWD/genome/sequences.fa -V $PWD/2.SNP/2.cohort/$j.g.vcf.gz -O $PWD/2.SNP/2.cohort/$j.vcf.gz " >>commands/2.SNP/s3.GenotypeGVCF.sh
 done
 
@@ -274,7 +293,7 @@ echo "bcftools query -f \"%CHROM\\t%POS\\t%REF\\t%ALT\\t%EFF[\\t%TGT]\\n\"   $PW
 
 seqrun "commands/1.mapping/s1.map.sh"
 seqrun "commands/1.mapping/s2.mapstat.sh"
-parallelrun "commands/1.mapping/s3.MarkDup.sh"
+seqrun "commands/1.mapping/s3.MarkDup.sh"
 parallelrun "commands/2.SNP/s1.HC.sh"
 parallelrun "commands/2.SNP/s2.CombineGVCFs.sh"
 parallelrun "commands/2.SNP/s3.GenotypeGVCF.sh"
